@@ -25,7 +25,9 @@ def create_embed_model() -> OpenAIEmbedding:
 
 def create_vector_store(table_name: str = "document_embeddings") -> PGVectorStore:
     db = settings.database
-    sync_url = f"postgresql+psycopg://{db.user}:{db.password}@{db.host}:{db.port}/{db.name}"
+    sync_url = (
+        f"postgresql+psycopg://{db.user}:{db.password}@{db.host}:{db.port}/{db.name}"
+    )
     return PGVectorStore(
         connection_string=sync_url,
         async_connection_string=db.async_url,

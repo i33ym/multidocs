@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run ruff check .
+
+      - run: uv run ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run mypy app/ main.py --ignore-missing-imports
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: multidocs
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: multidocs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U multidocs"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      OPENAI_API_KEY: sk-test-fake-key
+      OPENAI_MODEL: gpt-4o-mini
+      OPENAI_EMBEDDING_MODEL: text-embedding-3-small
+      DATABASE_HOST: localhost
+      DATABASE_PORT: 5432
+      DATABASE_NAME: multidocs
+      DATABASE_USER: multidocs
+      DATABASE_PASSWORD: testpass
+      TELEGRAM_BOT_TOKEN: fake-token
+      TELEGRAM_BOT_USERNAME: test_bot
+      TELEGRAM_MODE: polling
+      MCP_API_KEY: test-key
+      ADMIN_API_KEY: test-admin-key
+      DOCS_DIR: docs
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - run: uv sync --frozen
+
+      - run: uv run pytest tests/ -v

@@ -21,7 +21,11 @@ from app.api.router import router as api_router
 from app.config import settings
 from app.database import close_db, init_db
 from app.mcp.server import mcp
-from app.telegram.webhook import router as telegram_router, start_telegram, stop_telegram
+from app.telegram.webhook import (
+    router as telegram_router,
+    start_telegram,
+    stop_telegram,
+)
 
 logging.basicConfig(
     level=logging.DEBUG if settings.app.debug else logging.INFO,

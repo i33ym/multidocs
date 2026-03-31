@@ -7,7 +7,9 @@ from decouple import config
 class OpenAIConfig:
     api_key: str = config("OPENAI_API_KEY")
     model: str = config("OPENAI_MODEL", default="gpt-4o-mini")
-    embedding_model: str = config("OPENAI_EMBEDDING_MODEL", default="text-embedding-3-small")
+    embedding_model: str = config(
+        "OPENAI_EMBEDDING_MODEL", default="text-embedding-3-small"
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -34,9 +34,7 @@ async def store_message(
             ids_to_delete = [row[0] for row in oldest.all()]
             if ids_to_delete:
                 await session.execute(
-                    delete(TelegramMessage).where(
-                        TelegramMessage.id.in_(ids_to_delete)
-                    )
+                    delete(TelegramMessage).where(TelegramMessage.id.in_(ids_to_delete))
                 )
 
         await session.commit()
@@ -58,6 +56,4 @@ async def get_chat_context(chat_id: int, limit: int = 20) -> str:
         )
         messages = list(reversed(result.scalars().all()))
 
-    return "\n".join(
-        f"{msg.username or msg.user_id}: {msg.text}" for msg in messages
-    )
+    return "\n".join(f"{msg.username or msg.user_id}: {msg.text}" for msg in messages)

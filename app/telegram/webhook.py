@@ -96,7 +96,11 @@ async def _poll_loop() -> None:
             try:
                 resp = await client.get(
                     f"{TELEGRAM_API}/getUpdates",
-                    params={"offset": offset, "timeout": 30, "allowed_updates": ["message"]},
+                    params={
+                        "offset": offset,
+                        "timeout": 30,
+                        "allowed_updates": ["message"],
+                    },
                 )
                 data = resp.json()
                 if not data.get("ok"):
@@ -122,7 +126,9 @@ async def start_telegram() -> None:
 
     if settings.telegram.mode == "webhook":
         if not settings.telegram.webhook_url:
-            logger.warning("TELEGRAM_WEBHOOK_URL not set, skipping webhook registration")
+            logger.warning(
+                "TELEGRAM_WEBHOOK_URL not set, skipping webhook registration"
+            )
             return
         try:
             async with httpx.AsyncClient() as client:
@@ -136,7 +142,9 @@ async def start_telegram() -> None:
                 )
                 data = resp.json()
                 if data.get("ok"):
-                    logger.info("Telegram webhook registered: %s", settings.telegram.webhook_url)
+                    logger.info(
+                        "Telegram webhook registered: %s", settings.telegram.webhook_url
+                    )
                 else:
                     logger.warning("Telegram webhook registration failed: %s", data)
         except Exception:
