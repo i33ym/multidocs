@@ -74,7 +74,9 @@ async def _handle_message(message: dict) -> None:
 
         handler = state.agent.run(user_msg=user_message, memory=memory)
         result = await asyncio.wait_for(handler, timeout=settings.app.agent_timeout)
-        response_text = truncate_message(to_telegram_html(str(result.response)))
+        response_text = truncate_message(
+            to_telegram_html(str(getattr(result, "response", result)))
+        )
     except asyncio.TimeoutError:
         logger.error("Agent timed out for Telegram chat %d", chat_id)
         response_text = "Sorry, the request timed out. Please try again."

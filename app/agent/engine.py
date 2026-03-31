@@ -1,7 +1,10 @@
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from llama_index.core import VectorStoreIndex
 from llama_index.core.agent.workflow import FunctionAgent
+from llama_index.core.tools import BaseTool
 from llama_index.core.memory import FactExtractionMemoryBlock, Memory, VectorMemoryBlock
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
@@ -66,8 +69,9 @@ def create_memory(
 def create_agent(
     index: VectorStoreIndex, llm: OpenAI, spec_path: Path
 ) -> FunctionAgent:
+    tools: list[BaseTool | Callable[..., Any]] = list(create_tools(index, spec_path))
     return FunctionAgent(
-        tools=create_tools(index, spec_path),
+        tools=tools,
         llm=llm,
         system_prompt=SYSTEM_PROMPT,
     )

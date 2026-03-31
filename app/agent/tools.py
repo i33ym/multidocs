@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from llama_index.core import VectorStoreIndex
-from llama_index.core.tools import FunctionTool
+from llama_index.core.tools import BaseTool, FunctionTool
 from llama_index.core.vector_stores.types import (
     FilterOperator,
     MetadataFilter,
@@ -10,7 +10,7 @@ from llama_index.core.vector_stores.types import (
 )
 
 
-def create_tools(index: VectorStoreIndex, spec_path: Path) -> list[FunctionTool]:
+def create_tools(index: VectorStoreIndex, spec_path: Path) -> list[BaseTool]:
     with open(spec_path) as f:
         openapi_spec = json.load(f)
 

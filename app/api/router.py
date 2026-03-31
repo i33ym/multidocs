@@ -78,9 +78,10 @@ async def chat(
     try:
         memory = state.get_memory(request.session_id)
         handler = state.agent.run(user_msg=request.message, memory=memory)
-        response = await asyncio.wait_for(handler, timeout=settings.app.agent_timeout)
+        result = await asyncio.wait_for(handler, timeout=settings.app.agent_timeout)
         return ChatResponse(
-            response=str(response.response), session_id=request.session_id
+            response=str(getattr(result, "response", result)),
+            session_id=request.session_id,
         )
     except asyncio.TimeoutError:
         logger.error("Agent timed out for session %s", request.session_id)
