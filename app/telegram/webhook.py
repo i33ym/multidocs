@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request, Response
 from app.agent.prompts import TELEGRAM_CONTEXT_TEMPLATE
 from app.api.deps import get_app_state
 from app.config import settings
+from app.telegram.audio import transcribe_voice
 from app.telegram.formatter import to_telegram_html, truncate_message
 from app.telegram.handlers import get_chat_context, should_respond, store_message
 
@@ -41,16 +42,48 @@ async def _send_typing(chat_id: int) -> None:
         )
 
 
-async def _handle_message(message: dict) -> None:
-    if not message.get("text"):
-        return
+def _extract_text_and_file_id(message: dict) -> tuple[str | None, str | None]:
+    if message.get("text"):
+        return message["text"], None
 
+    voice = message.get("voice") or message.get("audio")
+    if voice:
+        caption = message.get("caption", "")
+        return caption or None, voice["file_id"]
+
+    return None, None
+
+
+async def _handle_message(message: dict) -> None:
     chat_id: int = message["chat"]["id"]
     chat_type: str = message["chat"].get("type", "private")
     user_id: int = message["from"]["id"]
     username: str | None = message["from"].get("username")
-    text: str = message["text"]
     message_id: int = message["message_id"]
+
+    text, voice_file_id = _extract_text_and_file_id(message)
+
+    if voice_file_id:
+        try:
+            await _send_typing(chat_id)
+        except Exception:
+            pass
+
+        transcribed = await transcribe_voice(voice_file_id)
+        if transcribed:
+            text = f"[Voice message] {transcribed}"
+            logger.info("Transcribed voice in chat %d: %s", chat_id, text[:100])
+        else:
+            try:
+                await _send_reply(
+                    chat_id, "Sorry, I couldn't process that voice message.", message_id
+                )
+            except Exception:
+                pass
+            return
+
+    if not text:
+        return
 
     try:
         await store_message(chat_id, user_id, username, text)
@@ -145,7 +178,8 @@ async def start_telegram() -> None:
                 data = resp.json()
                 if data.get("ok"):
                     logger.info(
-                        "Telegram webhook registered: %s", settings.telegram.webhook_url
+                        "Telegram webhook registered: %s",
+                        settings.telegram.webhook_url,
                     )
                 else:
                     logger.warning("Telegram webhook registration failed: %s", data)

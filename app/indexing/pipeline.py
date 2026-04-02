@@ -6,7 +6,7 @@ from sqlalchemy import select, text
 
 from app.config import settings
 from app.database import async_session
-from app.indexing.loader import get_splitter, load_documents
+from app.indexing.loader import get_splitter, get_supported_extensions, load_documents
 from app.models import IndexedFile
 
 
@@ -14,8 +14,19 @@ def _checksum(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _list_docs(docs_dir: Path) -> list[Path]:
+    exts = get_supported_extensions()
+    return [
+        f
+        for f in sorted(docs_dir.iterdir())
+        if f.is_file()
+        and not f.name.startswith(".")
+        and f.suffix.lower().lstrip(".") in exts
+    ]
+
+
 async def _needs_indexing(docs_dir: Path) -> bool:
-    all_files = list(docs_dir.glob("*.md")) + list(docs_dir.glob("*.json"))
+    all_files = _list_docs(docs_dir)
 
     async with async_session() as session:
         for file_path in all_files:
@@ -31,7 +42,7 @@ async def _needs_indexing(docs_dir: Path) -> bool:
 
 
 async def _update_checksums(docs_dir: Path) -> None:
-    all_files = list(docs_dir.glob("*.md")) + list(docs_dir.glob("*.json"))
+    all_files = _list_docs(docs_dir)
 
     async with async_session() as session:
         for file_path in all_files:

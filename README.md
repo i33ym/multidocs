@@ -6,34 +6,38 @@
 
 ## English
 
-Agentic RAG-powered documentation assistant for the Multicard payment platform API. Serves developers through a web chatbot, Telegram bot, and MCP server.
+Agentic RAG-powered documentation assistant for the Multicard payment platform API. Serves developers through a web chatbot (with voice input), Telegram bot (text + voice messages), MCP server, and an MCP server generator for any OpenAPI spec.
 
 ### Architecture
 
 ```text
                     ┌──────────────┐
                     │   Web Chat   │  localhost:8000
-                    │   (HTML UI)  │
+                    │ (text+voice) │
                     └──────┬───────┘
                            │
 ┌──────────────┐   ┌──────┴───────┐   ┌──────────────┐
 │   Telegram   ├───┤   FastAPI    ├───┤  MCP Server   │
-│  Bot (poll/  │   │              │   │  (/mcp or     │
-│   webhook)   │   │  /api/chat   │   │   stdio)      │
+│ (text+voice) │   │              │   │  (/mcp or     │
+│  poll/webhook│   │  /api/chat   │   │   stdio)      │
 └──────────────┘   │  /api/stream │   └──────────────┘
+                   │  /api/specs  │
                    └──────┬───────┘
                           │
-                ┌─────────┴──────────┐
-                │  LlamaIndex Agent  │
-                │  (FunctionAgent)   │
-                ├────────────────────┤
-                │  Tools:            │
-                │  - search_docs     │
-                │  - search_endpoints│
-                │  - search_guides   │
-                │  - get_endpoint    │
-                │  - list_endpoints  │
-                └─────────┬──────────┘
+           ┌──────────────┼──────────────┐
+           │              │              │
+    ┌──────┴──────┐ ┌─────┴─────┐ ┌──────┴──────┐
+    │   Whisper   │ │ LlamaIndex│ │ MCP Server  │
+    │   (audio    │ │   Agent   │ │  Generator  │
+    │ transcribe) │ │(multi-step│ │  (codegen)  │
+    └─────────────┘ │  ReAct)   │ └─────────────┘
+                    ├───────────┤
+                    │ 6 Tools:  │
+                    │ search_*  │
+                    │ get_*     │
+                    │ list_*    │
+                    │ by_tag    │
+                    └─────┬─────┘
                           │
               ┌───────────┴───────────┐
               │  PostgreSQL + pgvector │
@@ -48,12 +52,13 @@ Agentic RAG-powered documentation assistant for the Multicard payment platform A
 ### Tech Stack
 
 - **Framework**: FastAPI (async)
-- **AI/RAG**: LlamaIndex FunctionAgent + VectorStoreIndex
+- **AI/RAG**: LlamaIndex FunctionAgent (multi-step ReAct) + VectorStoreIndex
 - **LLM**: OpenAI (gpt-4o-mini default, configurable)
+- **Speech-to-Text**: OpenAI Whisper (whisper-1)
 - **Embeddings**: text-embedding-3-small (1536 dim)
 - **Database**: PostgreSQL with pgvector
 - **MCP**: FastMCP (embedded HTTP + standalone stdio)
-- **Telegram**: Polling (dev) / Webhook (prod)
+- **Telegram**: Polling (dev) / Webhook (prod), text + voice messages
 - **Config**: python-decouple (.env)
 - **Package Manager**: uv
 
@@ -102,33 +107,35 @@ make setup         # full project setup
 ├── Makefile                       # Dev/prod commands
 ├── .env.example                   # Environment template
 ├── docs/                          # Source documentation files
-│   ├── docs.json                  # OpenAPI specification
-│   └── docs.md                    # Markdown documentation
 ├── static/
-│   └── index.html                 # Web chat UI
+│   └── index.html                 # Web chat UI (text + voice)
+├── generated/                     # Auto-generated MCP servers (gitignored)
 ├── scripts/
 │   ├── index.py                   # Document indexing CLI
 │   └── mcp_server.py              # Standalone MCP server (stdio)
-├── tests/                         # Test suite
+├── tests/                         # Test suite (47 tests)
 └── app/
     ├── config.py                  # Settings via python-decouple
     ├── database.py                # Async engine, session factory
     ├── models.py                  # SQLAlchemy models
     ├── agent/
     │   ├── engine.py              # LLM, embeddings, vector store, memory, agent factories
-    │   ├── tools.py               # RAG tools (search, get, list)
-    │   └── prompts.py             # System prompt, context templates
+    │   ├── tools.py               # 6 RAG tools (search, get, list, by_tag)
+    │   └── prompts.py             # ReAct system prompt, context templates
+    ├── generator/
+    │   └── codegen.py             # OpenAPI → standalone MCP server generator
     ├── indexing/
     │   ├── parser.py              # OpenAPI spec → Documents with metadata
-    │   ├── loader.py              # Markdown + OpenAPI document loading
+    │   ├── loader.py              # Multi-format loader (md, json, yaml, pdf, docx, html, csv, txt)
     │   └── pipeline.py            # Indexing with checksum tracking
     ├── api/
-    │   ├── router.py              # /api/health, /api/chat, /api/chat/stream, /api/admin/reindex
+    │   ├── router.py              # All API endpoints
     │   ├── schemas.py             # Pydantic request/response models
     │   └── deps.py                # AppState singleton
     ├── telegram/
-    │   ├── webhook.py             # Polling + webhook modes, message handling
+    │   ├── webhook.py             # Polling + webhook modes, text + voice handling
     │   ├── handlers.py            # Message storage, ring buffer, context
+    │   ├── audio.py               # Whisper voice transcription
     │   └── formatter.py           # Markdown → Telegram HTML
     └── mcp/
         └── server.py              # FastMCP tools
@@ -142,7 +149,11 @@ make setup         # full project setup
 | GET | `/api/health` | - | Health check (DB + OpenAI status) |
 | POST | `/api/chat` | - | Chat (JSON request/response) |
 | POST | `/api/chat/stream` | - | Chat (streaming text response) |
+| POST | `/api/transcribe` | - | Audio → text via Whisper |
 | POST | `/api/admin/reindex` | Admin | Force re-index all documents |
+| POST | `/api/admin/specs` | Admin | Upload OpenAPI spec → generate MCP server |
+| GET | `/api/admin/specs` | Admin | List generated MCP servers |
+| DELETE | `/api/admin/specs/{name}` | Admin | Delete a generated MCP server |
 | POST | `/webhook/telegram` | Webhook secret | Telegram webhook receiver |
 | * | `/mcp/*` | Bearer token | MCP server (Streamable HTTP) |
 
@@ -159,10 +170,32 @@ curl -X POST http://localhost:8000/api/chat/stream \
   -H "Content-Type: application/json" \
   -d '{"message": "How do I authenticate?", "session_id": "my-session"}'
 
-# Reindex (requires ADMIN_API_KEY)
-curl -X POST http://localhost:8000/api/admin/reindex \
-  -H "Authorization: Bearer your-admin-api-key"
+# Voice transcription
+curl -X POST http://localhost:8000/api/transcribe \
+  -F "file=@recording.webm"
 ```
+
+### Agentic RAG
+
+The agent uses a multi-step ReAct approach with 6 tools:
+
+| Tool | Purpose |
+| ---- | ------- |
+| `search_docs` | Broad semantic search across all indexed content |
+| `search_endpoints` | Filtered search over API endpoint definitions |
+| `search_guides` | Filtered search over markdown guides |
+| `get_endpoint_details` | Full JSON spec for a specific endpoint (path + method) |
+| `list_endpoints` | List all endpoints, optionally filter by tag |
+| `search_by_tag` | Find all endpoints in a category (fuzzy tag matching) |
+
+The agent chains multiple tool calls per query: discover endpoints → fetch details → cross-reference guides → synthesize a complete answer with code examples.
+
+### Voice Input
+
+Voice messages are transcribed using OpenAI Whisper (`whisper-1`):
+
+- **Web chatbot**: Click the mic button to record, click again to stop. Audio is transcribed and sent automatically.
+- **Telegram**: Send a voice message or audio file. The bot transcribes it and responds to the text.
 
 ### MCP Server
 
@@ -197,7 +230,56 @@ Two modes:
 }
 ```
 
-**Available tools**: `search_docs`, `search_endpoints`, `get_endpoint`, `list_api_endpoints`, `ask_multicard`
+### MCP Server Generator
+
+Upload any OpenAPI spec and get a standalone MCP server generated automatically:
+
+```bash
+# Upload spec
+curl -X POST http://localhost:8000/api/admin/specs \
+  -H "Authorization: Bearer your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d @my-api-spec.json
+
+# List generated servers
+curl http://localhost:8000/api/admin/specs \
+  -H "Authorization: Bearer your-admin-key"
+
+# Delete a server
+curl -X DELETE http://localhost:8000/api/admin/specs/my_api \
+  -H "Authorization: Bearer your-admin-key"
+```
+
+Each generated server includes:
+
+- `server.py` — standalone FastMCP server with one tool per endpoint
+- `spec.json` — original spec
+- `mcp_config.json` — ready-to-paste config for Claude Desktop / IDE
+- `README.md` — auto-generated documentation
+
+Developers copy the `mcp_config.json` into their MCP client and Claude/Cursor instantly has structured knowledge of that API for generating accurate client code.
+
+### Adding Documentation
+
+1. Drop files into the `docs/` directory. Supported formats:
+
+   | Format | Extensions |
+   | ------ | ---------- |
+   | Markdown | `.md` |
+   | Plain text | `.txt`, `.rst` |
+   | OpenAPI | `.json`, `.yaml`, `.yml` |
+   | PDF | `.pdf` |
+   | Word | `.docx` |
+   | HTML | `.html`, `.htm` |
+   | CSV | `.csv` |
+
+2. Run indexing:
+
+   ```bash
+   make index
+   ```
+
+Indexing uses SHA-256 checksums — unchanged files are skipped. Custom formats can be added with the `@register_loader` decorator in [loader.py](app/indexing/loader.py).
 
 ### Telegram Bot
 
@@ -206,21 +288,7 @@ Set `TELEGRAM_MODE` in `.env`:
 - **`polling`** (default) — Bot pulls updates. Works locally, no public URL needed.
 - **`webhook`** — Telegram pushes updates. Requires `TELEGRAM_WEBHOOK_URL` (public HTTPS) and `TELEGRAM_WEBHOOK_SECRET`.
 
-The bot responds to all messages in private chats. In groups, it only responds when `@mentioned`.
-
-### Adding Documentation
-
-1. Place files in the `docs/` directory:
-   - `.json` files are parsed as OpenAPI specs (one vector per endpoint)
-   - `.md` files are chunked as general documentation
-
-2. Run indexing:
-
-   ```bash
-   make index
-   ```
-
-Indexing uses SHA-256 checksums — unchanged files are skipped automatically.
+The bot responds to all messages in private chats. In groups, it only responds when `@mentioned`. Supports both text and voice messages.
 
 ### Memory System
 
@@ -250,8 +318,6 @@ All settings via `.env` — see [.env.example](.env.example) for the full list. 
 
 ### Production Deployment
 
-Key changes for production:
-
 1. Set `TELEGRAM_MODE=webhook` with a public HTTPS URL
 2. Set strong random values for `MCP_API_KEY`, `ADMIN_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`
 3. Set `ALLOWED_ORIGINS` to your frontend domain(s)
@@ -263,7 +329,7 @@ Key changes for production:
 
 ## Русский
 
-RAG-ассистент для документации платёжной платформы Multicard API. Работает через веб-чатбот, Telegram-бот и MCP-сервер.
+Агентный RAG-ассистент для документации платёжной платформы Multicard API. Работает через веб-чатбот (с голосовым вводом), Telegram-бот (текст + голосовые сообщения), MCP-сервер и генератор MCP-серверов из любой OpenAPI-спецификации.
 
 ### Требования
 
@@ -306,63 +372,66 @@ make audit         # все проверки качества кода
 | GET | `/api/health` | - | Проверка состояния (БД + OpenAI) |
 | POST | `/api/chat` | - | Чат (JSON запрос/ответ) |
 | POST | `/api/chat/stream` | - | Чат (потоковый текстовый ответ) |
+| POST | `/api/transcribe` | - | Аудио → текст через Whisper |
 | POST | `/api/admin/reindex` | Admin | Переиндексация документации |
+| POST | `/api/admin/specs` | Admin | Загрузка OpenAPI → генерация MCP-сервера |
+| GET | `/api/admin/specs` | Admin | Список сгенерированных MCP-серверов |
+| DELETE | `/api/admin/specs/{name}` | Admin | Удаление сгенерированного MCP-сервера |
 | POST | `/webhook/telegram` | Webhook secret | Вебхук Telegram |
 | * | `/mcp/*` | Bearer токен | MCP-сервер (Streamable HTTP) |
+
+### Агентный RAG
+
+Агент использует многошаговый ReAct-подход с 6 инструментами:
+
+| Инструмент | Назначение |
+| ---------- | ---------- |
+| `search_docs` | Семантический поиск по всей индексированной документации |
+| `search_endpoints` | Поиск по определениям API-эндпоинтов |
+| `search_guides` | Поиск по markdown-руководствам |
+| `get_endpoint_details` | Полная JSON-спецификация конкретного эндпоинта |
+| `list_endpoints` | Список всех эндпоинтов с фильтрацией по тегу |
+| `search_by_tag` | Поиск всех эндпоинтов в категории (нечёткое совпадение) |
+
+Агент цепочкой вызывает несколько инструментов: находит эндпоинты → получает детали → сверяет с руководствами → формирует полный ответ с примерами кода.
+
+### Голосовой ввод
+
+Голосовые сообщения транскрибируются через OpenAI Whisper (`whisper-1`):
+
+- **Веб-чатбот**: нажмите кнопку микрофона для записи, нажмите снова для остановки
+- **Telegram**: отправьте голосовое сообщение или аудиофайл
+
+### Генератор MCP-серверов
+
+Загрузите любую OpenAPI-спецификацию и получите готовый MCP-сервер:
+
+```bash
+curl -X POST http://localhost:8000/api/admin/specs \
+  -H "Authorization: Bearer your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d @my-api-spec.json
+```
+
+Генерируется: `server.py`, `spec.json`, `mcp_config.json`, `README.md`. Разработчик копирует `mcp_config.json` в свой MCP-клиент — и Claude/Cursor мгновенно получает структурированные знания об этом API.
+
+### Добавление документации
+
+Поддерживаемые форматы: `.md`, `.txt`, `.rst`, `.json`, `.yaml`, `.yml`, `.pdf`, `.docx`, `.html`, `.htm`, `.csv`
+
+1. Поместите файлы в директорию `docs/`
+2. Запустите `make index`
+
+Пользовательские форматы добавляются через декоратор `@register_loader` в [loader.py](app/indexing/loader.py).
 
 ### Telegram-бот
 
 Установите `TELEGRAM_MODE` в `.env`:
 
-- **`polling`** (по умолчанию) — бот сам запрашивает обновления. Работает локально без публичного URL.
-- **`webhook`** — Telegram отправляет обновления. Требуется `TELEGRAM_WEBHOOK_URL` (публичный HTTPS) и `TELEGRAM_WEBHOOK_SECRET`.
+- **`polling`** (по умолчанию) — работает локально без публичного URL
+- **`webhook`** — для продакшна, требуется публичный HTTPS URL
 
-Бот отвечает на все сообщения в личных чатах. В группах — только при `@упоминании`.
-
-### Добавление документации
-
-1. Поместите файлы в директорию `docs/`:
-   - `.json` — парсятся как OpenAPI-спецификации (один вектор на эндпоинт)
-   - `.md` — разбиваются на чанки как документация
-
-2. Запустите индексацию:
-
-   ```bash
-   make index
-   ```
-
-Индексация использует SHA-256 контрольные суммы — неизменённые файлы пропускаются.
-
-### MCP-сервер
-
-**Встроенный** (работает с FastAPI на `/mcp`):
-
-```json
-{
-  "mcpServers": {
-    "multicard": {
-      "type": "streamable-http",
-      "url": "http://localhost:8000/mcp",
-      "headers": { "Authorization": "Bearer your-mcp-api-key" }
-    }
-  }
-}
-```
-
-**Автономный** (stdio, для Claude Desktop / IDE):
-
-```json
-{
-  "mcpServers": {
-    "multicard": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "python", "scripts/mcp_server.py"],
-      "cwd": "/path/to/multidocs"
-    }
-  }
-}
-```
+Бот отвечает на все сообщения в личных чатах. В группах — только при `@упоминании`. Поддерживает текст и голосовые сообщения.
 
 ### Продакшн
 
@@ -377,7 +446,7 @@ make audit         # все проверки качества кода
 
 ## O'zbek
 
-Multicard to'lov platformasi API dokumentatsiyasi uchun RAG-assistenti. Veb-chatbot, Telegram-bot va MCP-server orqali ishlatiladi.
+Multicard to'lov platformasi API dokumentatsiyasi uchun agentli RAG-assistent. Veb-chatbot (ovozli kiritish bilan), Telegram-bot (matn + ovozli xabarlar), MCP-server va har qanday OpenAPI spetsifikatsiyasidan MCP-server generatori orqali ishlaydi.
 
 ### Talablar
 
@@ -420,32 +489,66 @@ make audit         # kod sifatining barcha tekshiruvlari
 | GET | `/api/health` | - | Holat tekshiruvi (DB + OpenAI) |
 | POST | `/api/chat` | - | Chat (JSON so'rov/javob) |
 | POST | `/api/chat/stream` | - | Chat (oqimli matnli javob) |
+| POST | `/api/transcribe` | - | Audio → matn Whisper orqali |
 | POST | `/api/admin/reindex` | Admin | Dokumentatsiyani qayta indekslash |
+| POST | `/api/admin/specs` | Admin | OpenAPI yuklash → MCP-server generatsiyasi |
+| GET | `/api/admin/specs` | Admin | Generatsiya qilingan MCP-serverlar ro'yxati |
+| DELETE | `/api/admin/specs/{name}` | Admin | Generatsiya qilingan MCP-serverni o'chirish |
 | POST | `/webhook/telegram` | Webhook secret | Telegram webhook qabul qiluvchi |
 | * | `/mcp/*` | Bearer token | MCP-server (Streamable HTTP) |
+
+### Agentli RAG
+
+Agent ko'p bosqichli ReAct yondashuvi bilan 6 ta asbobdan foydalanadi:
+
+| Asbob | Maqsad |
+| ----- | ------ |
+| `search_docs` | Barcha indekslangan kontent bo'yicha semantik qidiruv |
+| `search_endpoints` | API endpoint ta'riflari bo'yicha filtrlangan qidiruv |
+| `search_guides` | Markdown qo'llanmalar bo'yicha filtrlangan qidiruv |
+| `get_endpoint_details` | Muayyan endpoint uchun to'liq JSON spetsifikatsiya |
+| `list_endpoints` | Barcha endpointlar ro'yxati, teg bo'yicha filtr |
+| `search_by_tag` | Kategoriya bo'yicha barcha endpointlarni topish |
+
+Agent bir so'rov uchun bir nechta asbobni zanjirlab chaqiradi: endpointlarni topadi → tafsilotlarni oladi → qo'llanmalar bilan solishtiradi → kod misollari bilan to'liq javob beradi.
+
+### Ovozli kiritish
+
+Ovozli xabarlar OpenAI Whisper (`whisper-1`) orqali transkripsiya qilinadi:
+
+- **Veb-chatbot**: yozish uchun mikrofon tugmasini bosing, to'xtatish uchun yana bosing
+- **Telegram**: ovozli xabar yoki audio fayl yuboring
+
+### MCP-server generatori
+
+Har qanday OpenAPI spetsifikatsiyasini yuklang va tayyor MCP-server oling:
+
+```bash
+curl -X POST http://localhost:8000/api/admin/specs \
+  -H "Authorization: Bearer your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d @my-api-spec.json
+```
+
+Generatsiya qilinadi: `server.py`, `spec.json`, `mcp_config.json`, `README.md`. Dasturchi `mcp_config.json` ni MCP-klientiga nusxalaydi — va Claude/Cursor shu zahoti ushbu API haqida tuzilgan bilimga ega bo'ladi.
+
+### Dokumentatsiya qo'shish
+
+Qo'llab-quvvatlanadigan formatlar: `.md`, `.txt`, `.rst`, `.json`, `.yaml`, `.yml`, `.pdf`, `.docx`, `.html`, `.htm`, `.csv`
+
+1. Fayllarni `docs/` papkasiga joylashtiring
+2. `make index` ni ishga tushiring
+
+Maxsus formatlar [loader.py](app/indexing/loader.py) dagi `@register_loader` dekoratori orqali qo'shiladi.
 
 ### Telegram bot
 
 `.env` faylida `TELEGRAM_MODE` ni sozlang:
 
-- **`polling`** (standart) — bot yangilanishlarni o'zi so'raydi. Lokal ishlaydi, umumiy URL talab qilinmaydi.
-- **`webhook`** — Telegram yangilanishlarni jo'natadi. `TELEGRAM_WEBHOOK_URL` (umumiy HTTPS) va `TELEGRAM_WEBHOOK_SECRET` kerak.
+- **`polling`** (standart) — lokal ishlaydi, umumiy URL talab qilinmaydi
+- **`webhook`** — prodakshn uchun, umumiy HTTPS URL kerak
 
-Bot shaxsiy chatlarda barcha xabarlarga javob beradi. Guruhlarda faqat `@eslatilganda` javob beradi.
-
-### Dokumentatsiya qo'shish
-
-1. Fayllarni `docs/` papkasiga joylashtiring:
-   - `.json` — OpenAPI spetsifikatsiyasi sifatida qayta ishlanadi (har bir endpoint uchun bitta vektor)
-   - `.md` — dokumentatsiya sifatida bo'laklarga bo'linadi
-
-2. Indekslashni ishga tushiring:
-
-   ```bash
-   make index
-   ```
-
-Indekslash SHA-256 nazorat yig'indisini ishlatadi — o'zgarmagan fayllar o'tkazib yuboriladi.
+Bot shaxsiy chatlarda barcha xabarlarga javob beradi. Guruhlarda faqat `@eslatilganda` javob beradi. Matn va ovozli xabarlarni qo'llab-quvvatlaydi.
 
 ### MCP-server
 
